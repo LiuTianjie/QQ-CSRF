@@ -1,0 +1,131 @@
+import re                   # 正则表达式
+import requests             # http请求库
+import urllib               # url相关的库
+import time                 # 系统时间的库
+import json                 # 解析json的库
+from urllib import request, parse   # 便于直接使用prase库的功能
+from http import cookiejar          # cookiejar库跟cookie处理相关
+from selenium import webdriver      # 模拟浏览器登陆的过程
+headers = {
+    'Referer': 'https://xui.ptlogin2.qq.com/cgi-bin/xlogin?proxy_url=https%3A//qzs.qq.com/qzone/v6/portal/proxy.html'
+               '&daid=5&&hide_title_bar=1&low_login=0&qlogin_auto_login=1&no_verifyimg=1&link_target=blank&appid'
+               '=549000912&style=22&target=self&s_url=https%3A%2F%2Fqzs.qzone.qq.com%2Fqzone%2Fv5%2Floginsucc.html'
+               '%3Fpara%3Dizone&pt_qr_app=%E6%89%8B%E6%9C%BAQQ%E7%A9%BA%E9%97%B4&pt_qr_link=http%3A//z.qzone.com'
+               '/download.html&self_regurl=https%3A//qzs.qq.com/qzone/v6/reg/index.html&pt_qr_help_link=http%3A//z'
+               '.qzone.com/download.html&pt_no_auth=1',
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.14; rv:65.0) Gecko/20100101 Firefox/65.0",
+    "Accept": "*/*",
+    'Content-Type':':application/json'
+}       # 构造一个头部，来自GET方法获取到登录框的信息
+
+
+def get_url_jump():                 # 获取登陆成功跳转的url
+    url_real = ''
+    # 第一步获取pt_local_token，此参数用于构造登陆的的QQ账号
+    s = requests.session()
+    r = s.get(
+        "https://xui.ptlogin2.qq.com/cgi-bin/xlogin?proxy_url=https://qzs.qq.com/qzone/v6/portal/proxy.html&daid=5"
+        "&&hide_title_bar=1&low_login=0&qlogin_auto_login=1&no_verifyimg=1&link_target=blank&appid=549000912&style"
+        "=22&target=self&s_url=https://qzs.qzone.qq.com/qzone/v5/loginsucc.html?para=izone&pt_qr_app=手机QQ"
+        "空间&pt_qr_link=http://z.qzone.com/download.html&self_regurl=https://qzs.qq.com/qzone/v6/reg/index.html"
+        "&pt_qr_help_link=http://z.qzone.com/download.html&pt_no_auth=1", headers=headers)  # 通过多次观察发现，通过GET方法从此域名cookie中可以获取pt_local_token的值
+    pt_local_token = r.cookies.get('pt_local_token')    # 获取pt_local_token参数
+    # print(pt_local_token) 打印token参数
+    # 第二步获取在线的QQ用户
+    r = s.get(
+        "https://localhost.ptlogin2.qq.com:4301/pt_get_uins?callback=ptui_getuins_CB&r=0.7566563038540396&pt_local_tk=" + pt_local_token,
+        headers=headers)    # 通过pt_loacl_token的值，定位到登录框，其中包含用户名
+    pattern = re.compile(r'"uin":"(\d+)"')
+    uin = pattern.findall(r.text)
+    # print(uin[0]) 打印用户名
+    if len(uin) > 0:
+        s.get(
+            "https://localhost.ptlogin2.qq.com:4301/pt_get_st?clientuin=%s&callback=ptui_getst_CB&r=0"
+            ".6730134294595574&pt_local_tk=%s" % (
+                uin[0], pt_local_token), headers=headers)   # 使用get请求，模拟点击登录按钮的操作
+        r = s.get(
+            'https://ssl.ptlogin2.qq.com/jump?clientuin=%s&keyindex=19&pt_aid=549000912&daid=5&u1=https://qzs.qzone'
+            '.qq.com/qzone/v5/loginsucc.html?para=izone&pt_local_tk=%s&pt_3rd_aid=0&ptopt=1&style=40' % (
+                uin[0], pt_local_token), headers=headers)   # 使用get请求，模拟点击登录按钮的操作
+        # 实际上点击登陆按钮时产生了两个get请求，得到了一个跳转链接
+        pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+') # 利用正则表达式匹配出登陆成功跳转的url
+        url = pattern.findall(r.text)
+        url_real = url[0][:-2]
+        print(url_real)
+    else:
+        print("当前没有QQ账户登陆！")
+    return uin[0], url_real
+
+
+def get_real_cookie(url_jmp):
+    driver = webdriver.Safari() # 使用Mac自带的Safari浏览器进行直观的模拟
+    driver.get(url_jmp)  # 涉及登陆重定向问题，常规方法无法获取正确的p_skey
+    print("登陆成功！", driver.current_url)
+    time.sleep(5)  # 休眠5秒后，即已经跳转到登陆成功页面后
+    text = driver.page_source   # 再获取跳转后网页源代码
+    g_qzonetoken = re.search('window\.g_qzonetoken = \(function\(\)\{ try\{return (.*?);\} catch\(e\)', text)
+    g_qzonetoken = str(g_qzonetoken[0]).split('\"')[1]  # 从网页源码中提取g_qzonetoken，并通过正则匹配出来
+    # print('qzonetoken=',g_qzonetoken) 查看qzonetoken
+    cookie = driver.get_cookies() # 获取登陆成功后的cookie，将来发布说说的时候，伪装进头部，避免登陆过程
+    jsonCookies = json.dumps(cookie)
+    with open('qqhomepage.json', 'w') as f:
+        f.write(jsonCookies)
+    # 将此时页面的cookie文件以json的形式保存下来
+    # str = ''
+    with open('qqhomepage.json', 'r', encoding='utf-8') as f:
+        listCookies = json.loads(f.read())
+    # 读取json，并将其包含的参数转换成字典
+    cookie = [item["name"] + "=" + item["value"] for item in listCookies]   # 列表解析，将字典转换成二维列表
+    cookiestr = '; '.join(item for item in cookie)
+    # 将二维列表转换成字符串，方便封装进请求的头部
+    # print("point1", cookiestr) #查看cookie的name和对应的value
+    p_skey = ''.join(re.findall(r'p_skey=(.+?); ',cookiestr)) # 利用正则表达式，匹配获取到p_skey便于计算发布说说所需要的g_tk参数
+    # print(p_skey)查看p_skey
+    return p_skey,g_qzonetoken,cookiestr
+    # 返回p_skey、qzonetoken参数、以及cookie的字符串形式
+
+
+def gtk(p_skey):    # 百度的g_tk算法
+    HashId = 5381
+    p_skey = p_skey.strip()
+    for i in range(0, len(p_skey)):
+        HashId = HashId + HashId * 32 + ord(p_skey[i])
+    gtk = HashId & 2147483647
+    return gtk
+
+
+def talk(user,gtk,qzonetoken,text,cookie):  # 发布说说的功能函数
+    url_talk = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6?g_tk="+str(gtk)+"&qzonetoken="+qzonetoken
+    # 通过观察，构造发布说说的POST请求域名
+    # print("url_talk",url_talk) 验证域名
+    postdata = urllib.parse.urlencode({'code_version': '1', 'con': text, 'feedversion': '1', 'format': 'fs', 'hostuin': user,
+                'qzreferrer': 'http://user.qzone.qq.com/' + user, 'richtype': '', 'richval': '',
+                'special_url': '', 'subrichtype': '', 'syn_tweet_verson': '1', 'to_sign': '0', 'to_tweet': '0',
+                'ugc_right': '1', 'ver': '1', 'who': '1'}).encode("utf-8")
+    # 通过观察构造POST请求的表单数据，其中con对应的是发表说说的内容
+    headers.update({"Referer": url_talk, "cookie": cookie}) # 更新头部，将referer参数和cookie封装进头部
+    # print("headers:", headers) 验证cookie是否正确
+    req = urllib.request.Request(url=url_talk, data=postdata, headers=headers)
+    # 构造POST请求
+    r = urllib.request.urlopen(req)
+    # 发送请求，模拟单击发表按钮的操作
+    print(r.read().decode('utf-8'))
+
+
+if __name__ == '__main__':
+    list1 = get_url_jump()
+    user = list1[0]
+    print(type(user))
+    print("用户名：", user)
+    url_jmp = list1[1]
+    list2 = get_real_cookie(url_jmp)
+    p_skey = list2[0]
+    print("p_skey：", p_skey)
+    qztoken = list2[1]
+    print("qzonetoken：", qztoken)
+    cookie = list2[2]
+    print("cookie:",cookie)
+    gtk = gtk(p_skey)
+    print("gtk：", gtk)
+    text = "2019年3月2日测试"
+    talk(user,gtk,qztoken,text,cookie)
