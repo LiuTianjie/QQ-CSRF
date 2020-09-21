@@ -127,5 +127,5 @@ if __name__ == '__main__':
     print("cookie:",cookie)
     gtk = gtk(p_skey)
     print("gtk：", gtk)
-    text = "2019年3月2日测试"
+    text = "2020年9月18日测试"
     talk(user,gtk,qztoken,text,cookie)
